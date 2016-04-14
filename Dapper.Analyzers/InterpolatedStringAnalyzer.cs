@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics;
@@ -8,6 +9,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Microsoft.CodeAnalysis.Text;
 
 namespace Dapper.Analyzers
 {
@@ -52,7 +54,7 @@ namespace Dapper.Analyzers
                         // the call site is usually uses the reduced form of the ext method, e.g.:
                         // `db.Query("..")` whereas methods contain symbols for `SqlMapper.Query(db, "")`
                         var reducedForm = resolved.GetConstructedReducedFrom();
-                        if (!methods.Contains(reducedForm)) return;
+                        if (reducedForm == null || !methods.Contains(reducedForm)) return;
                     }
 
                     var sqlParameter = resolved.Parameters.Single(p => p.Name == "sql");
@@ -66,7 +68,30 @@ namespace Dapper.Analyzers
                             : arguments.Single(x => x.NameColon.Name.ToString() == "sql");
 
                     // TODO moar flow analysis...
-                    // currently only follows chains of variable/field declarations with initializers
+
+                    // PERF this could be cached keyed by BlockSyntax
+                    var localBlock = new Lazy<SyntaxNode>(() => nodeContext.ContainingSymbol.DeclaringSyntaxReferences.Single().GetSyntax(), false);
+                    var assignedOutsideOfDeclaration = new Lazy<ImmutableHashSet<ISymbol>>(() =>
+                        Enumerable.Empty<SyntaxNode>()
+                            .Concat( // var a = ...; a = b
+                                localBlock.Value
+                                    .DescendantNodes(x => !x.IsKind(SyntaxKind.VariableDeclaration))
+                                    .OfType<AssignmentExpressionSyntax>()
+                                    .Select(x => x.Left))
+                            .Concat( // var a = ...; test(out/ref a)
+                                localBlock.Value
+                                    .DescendantNodes()
+                                    .OfType<InvocationExpressionSyntax>()
+                                    .SelectMany(i => i.ArgumentList.Arguments
+                                        .Where(x => x.RefOrOutKeyword.VarianceKindFromToken() != VarianceKind.None)
+                                        .Select(x => x.Expression)))
+                            .Select(x => model.GetSymbolInfo(x).Symbol)
+                            .Where(x => x != null)
+                            .ToImmutableHashSet(),
+                        false);
+
+                    // currently follows chains of variable-/readonly field declarations with initializers
+                    var followSymbol = true;
                     for (var expression = argumentSyntax.Expression; expression != null; )
                     {
                         if (expression.IsKind(SyntaxKind.InterpolatedStringExpression))
@@ -76,10 +101,33 @@ namespace Dapper.Analyzers
                         }
 
                         if (model.GetConstantValue(expression).HasValue) return; // we have a const string..
+                        if (!followSymbol) return; // don't follow symbols after we've left the local scope
 
-                        var localSymbol = model.GetSymbolInfo(expression).Symbol;
-                        var declaration = localSymbol?.DeclaringSyntaxReferences.Single().GetSyntax() as VariableDeclaratorSyntax;
+
+                        var symbol = model.GetSymbolInfo(expression).Symbol;
+                        var localSymbol = symbol as ILocalSymbol;
+                        var fieldSymbol = symbol as IFieldSymbol;
+                        if (localSymbol != null)
+                        {
+                            followSymbol = true;
+                        }
+                        else if (fieldSymbol != null)
+                        {
+                            followSymbol = fieldSymbol.IsReadOnly;
+                        }
+                        else
+                        {
+                            followSymbol = false;
+                        }
+
+                        var declaration = symbol?.DeclaringSyntaxReferences.Single().GetSyntax() as VariableDeclaratorSyntax;
                         expression = declaration?.Initializer.Value;
+
+                        // TODO see if we can somehow `model.AnalyzeDataFlow()` between (exclusive) declaration and invoication
+                        if (symbol != null && declaration != null && assignedOutsideOfDeclaration.Value.Contains(symbol))
+                        {
+                            return;
+                        }
                     }
 
                 }, SyntaxKind.InvocationExpression);

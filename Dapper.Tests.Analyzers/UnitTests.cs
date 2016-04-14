@@ -3,6 +3,7 @@ using Microsoft.CodeAnalysis.CodeFixes;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
+using System.Data.SqlTypes;
 using TestHelper;
 using Dapper;
 using Dapper.Analyzers;
@@ -61,7 +62,7 @@ namespace Dapper.Tests.Analyzers
     }";
             VerifyCSharpDiagnostic(test);
         }
-        
+
         [TestMethod]
         public void Diagnostic_On_InterpolatedString()
         {
@@ -95,7 +96,7 @@ namespace Dapper.Tests.Analyzers
 
             VerifyCSharpDiagnostic(test, expected);
         }
-        
+
         [TestMethod]
         public void Diagnostic_On_InterpolatedString_Flow()
         {
@@ -158,7 +159,7 @@ namespace Dapper.Tests.Analyzers
         }
 
         [TestMethod]
-        public void Diagnostic_On_InterpolatedString_Field_Flow()
+        public void Diagnostic_On_InterpolatedString_Field()
         {
             var test = @"
     namespace TestMethod2
@@ -169,10 +170,10 @@ namespace Dapper.Tests.Analyzers
         class TypeName
         {
             public static string sql0 = $""select {id}"";
+            public static int id = -1;
             public static void Main()
             {
                 IDbConnection db = null;
-                int id = -1;
                 var sql1 = sql0;
                 var sql2 = sql1;
                 db.Query(sql2);
@@ -192,6 +193,119 @@ namespace Dapper.Tests.Analyzers
             };
 
             VerifyCSharpDiagnostic(test, expected);
+        }
+
+        [TestMethod]
+        public void No_Diagnostic_On_InterpolatedString_Field_Flow()
+        {
+            // sql1 isn't always sql0, it can be mutated... 
+            var test = @"
+    namespace TestMethod2
+    {
+        using System;
+        using System.Data;
+        using Dapper;
+        class TypeName
+        {
+            public static string sql0 = $""select {id}"";
+            public static string sql1 = sql0;
+            public static void Main()
+            {
+                IDbConnection db = null;
+                var sql2 = sql1;
+                db.Query(sql2);
+            }
+        }
+    }";
+
+            VerifyCSharpDiagnostic(test);
+        }
+
+        [TestMethod]
+        public void Diagnostic_On_InterpolatedString_Readonly_Field_Flow()
+        {
+            var test = @"
+    namespace TestMethod2
+    {
+        using System;
+        using System.Data;
+        using Dapper;
+        class TypeName
+        {
+            public static string sql0 = $""select {id}"";
+            public static readonly string sql1 = sql0;
+            public static void Main()
+            {
+                IDbConnection db = null;
+                var sql2 = sql1;
+                db.Query(sql2);
+            }
+        }
+    }";
+            var expected = new DiagnosticResult
+            {
+                Id = "DAPPER0001",
+                Message = "Interpolated string used in query",
+                Severity = DiagnosticSeverity.Warning,
+                Locations =
+                    new[]
+                    {
+                        new DiagnosticResultLocation("Test0.cs", 9, 41)
+                    }
+            };
+
+            VerifyCSharpDiagnostic(test, expected);
+        }
+
+        [TestMethod]
+        public void No_Diagnostic_InterpolatedString_Variable_Assigned()
+        {
+            var test = @"
+    namespace TestMethod2
+    {
+        using System;
+        using System.Data;
+        using Dapper;
+        class TypeName
+        {
+            public static void Main()
+            {
+                IDbConnection db = null;
+                var sql1 =  $""wat{1}"";
+                sql1 = ""select 1"";
+                var sql2 = sql1;
+                db.Query(sql2);
+            }
+        }
+    }";
+
+            VerifyCSharpDiagnostic(test);
+        }
+        [TestMethod]
+        public void No_Diagnostic_InterpolatedString_Variable_Referenced()
+        {
+            var test = @"
+    namespace TestMethod2
+    {
+        using System;
+        using System.Data;
+        using Dapper;
+        class TypeName
+        {
+            public static void Main()
+            {
+                IDbConnection db = null;
+                var sql1 =  $""wat{1}"";
+                Test(out sql1);
+                var sql2 = sql1;
+                db.Query(sql2);
+            }
+
+            private static void Test(out string test) => test = "";
+        }
+    }";
+
+            VerifyCSharpDiagnostic(test);
         }
     }
 }
