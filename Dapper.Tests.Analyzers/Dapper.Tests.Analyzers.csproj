@@ -34,6 +34,10 @@
     <Prefer32Bit>false</Prefer32Bit>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="Dapper, Version=1.40.0.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\packages\Dapper.1.42\lib\net45\Dapper.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
     <Reference Include="Microsoft.CodeAnalysis, Version=1.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35, processorArchitecture=MSIL">
       <HintPath>..\..\packages\Microsoft.CodeAnalysis.Common.1.0.0\lib\net45\Microsoft.CodeAnalysis.dll</HintPath>
       <Private>True</Private>
@@ -120,10 +124,6 @@
     <ProjectReference Include="..\Dapper.Analyzers\Dapper.Analyzers.csproj">
       <Project>{2d7d8ff0-d1f8-4880-b8a4-13a9ad8813b6}</Project>
       <Name>Dapper.Analyzers</Name>
-    </ProjectReference>
-    <ProjectReference Include="..\Dapper\Dapper.xproj">
-      <Project>{fac24c3f-68f9-4247-a4b9-21d487e99275}</Project>
-      <Name>Dapper</Name>
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
