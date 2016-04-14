@@ -67,29 +67,6 @@ namespace Dapper.Analyzers
                             ? arguments[sqlParameter.Ordinal] // no named arguments, or first named argument after the sql parameter's position
                             : arguments.Single(x => x.NameColon.Name.ToString() == "sql");
 
-                    // TODO moar flow analysis...
-
-                    // PERF this could be cached keyed by BlockSyntax
-                    var localBlock = new Lazy<SyntaxNode>(() => nodeContext.ContainingSymbol.DeclaringSyntaxReferences.Single().GetSyntax(), false);
-                    var assignedOutsideOfDeclaration = new Lazy<ImmutableHashSet<ISymbol>>(() =>
-                        Enumerable.Empty<SyntaxNode>()
-                            .Concat( // var a = ...; a = b
-                                localBlock.Value
-                                    .DescendantNodes(x => !x.IsKind(SyntaxKind.VariableDeclaration))
-                                    .OfType<AssignmentExpressionSyntax>()
-                                    .Select(x => x.Left))
-                            .Concat( // var a = ...; test(out/ref a)
-                                localBlock.Value
-                                    .DescendantNodes()
-                                    .OfType<InvocationExpressionSyntax>()
-                                    .SelectMany(i => i.ArgumentList.Arguments
-                                        .Where(x => x.RefOrOutKeyword.VarianceKindFromToken() != VarianceKind.None)
-                                        .Select(x => x.Expression)))
-                            .Select(x => model.GetSymbolInfo(x).Symbol)
-                            .Where(x => x != null)
-                            .ToImmutableHashSet(),
-                        false);
-
                     // currently follows chains of variable-/readonly field declarations with initializers
                     var followSymbol = true;
                     for (var expression = argumentSyntax.Expression; expression != null; )
@@ -123,10 +100,22 @@ namespace Dapper.Analyzers
                         var declaration = symbol?.DeclaringSyntaxReferences.Single().GetSyntax() as VariableDeclaratorSyntax;
                         expression = declaration?.Initializer.Value;
 
-                        // TODO see if we can somehow `model.AnalyzeDataFlow()` between (exclusive) declaration and invoication
-                        if (symbol != null && declaration != null && assignedOutsideOfDeclaration.Value.Contains(symbol))
+                        if (localSymbol != null && declaration != null)
                         {
-                            return;
+                            // Check the values written between the first statement after the local symbol
+                            // declaration and the invocation receiveing the symbol.
+                            // If the localSymbol is being written to inside this area, we cannot assume anything about it's value.
+                            var root = nodeContext.Node.SyntaxTree.GetRoot();
+                            var declarationStatementEnd = declaration.FirstAncestorOrSelf<StatementSyntax>().FullSpan.End;
+                            var firstStatementAfterDeclaration = root.FindNode(
+                                TextSpan.FromBounds(declarationStatementEnd, declarationStatementEnd + 1), findInsideTrivia: true)
+                                .FirstAncestorOrSelf<StatementSyntax>();
+                            var invocationStatement = invocation.FirstAncestorOrSelf<StatementSyntax>();
+                            var dataFlow = model.AnalyzeDataFlow(firstStatementAfterDeclaration, invocationStatement);
+                            if (dataFlow.WrittenInside.Contains(localSymbol))
+                            {
+                                return;
+                            }
                         }
                     }
 
