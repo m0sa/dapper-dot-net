@@ -65,17 +65,23 @@ namespace Dapper.Analyzers
                             ? arguments[sqlParameter.Ordinal] // no named arguments, or first named argument after the sql parameter's position
                             : arguments.Single(x => x.NameColon.Name.ToString() == "sql");
 
-                    if (model.GetConstantValue(argumentSyntax.Expression).HasValue) return;
-
-                    if (argumentSyntax.Expression.IsKind(SyntaxKind.InterpolatedStringExpression))
+                    // TODO moar flow analysis...
+                    // currently only follows chains of variable/field declarations with initializers
+                    for (var expression = argumentSyntax.Expression; expression != null; )
                     {
-                        nodeContext.ReportDiagnostic(Diagnostic.Create(Rule, argumentSyntax.GetLocation()));
-                        return;
+                        if (expression.IsKind(SyntaxKind.InterpolatedStringExpression))
+                        {
+                            nodeContext.ReportDiagnostic(Diagnostic.Create(Rule, expression.GetLocation()));
+                            return;
+                        }
+
+                        if (model.GetConstantValue(expression).HasValue) return; // we have a const string..
+
+                        var localSymbol = model.GetSymbolInfo(expression).Symbol;
+                        var declaration = localSymbol?.DeclaringSyntaxReferences.Single().GetSyntax() as VariableDeclaratorSyntax;
+                        expression = declaration?.Initializer.Value;
                     }
 
-                    // TODO flow analysis...
-                    // var flow = model.AnalyzeDataFlow(argumentSyntax.Expression);
-                    
                 }, SyntaxKind.InvocationExpression);
             });
         }

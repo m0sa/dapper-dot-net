@@ -95,7 +95,7 @@ namespace Dapper.Tests.Analyzers
 
             VerifyCSharpDiagnostic(test, expected);
         }
-
+        
         [TestMethod]
         public void Diagnostic_On_InterpolatedString_Flow()
         {
@@ -125,7 +125,69 @@ namespace Dapper.Tests.Analyzers
                 Locations =
                     new[]
                     {
-                        new DiagnosticResultLocation("Test0.cs", 15, 26)
+                        new DiagnosticResultLocation("Test0.cs", 13, 28)
+                    }
+            };
+
+            VerifyCSharpDiagnostic(test, expected);
+        }
+
+        [TestMethod]
+        public void NoDiagnostic_On_Const_Flow()
+        {
+            var test = @"
+    namespace TestMethod2
+    {
+        using System;
+        using System.Data;
+        using Dapper;
+        class TypeName
+        {
+            private const string sql0 = ""select 1"";
+            public static void Main()
+            {
+                IDbConnection db = null;
+                var sql1 = sql0;
+                var sql2 = sql1;
+                db.Query(sql2);
+            }
+        }
+    }";
+
+            VerifyCSharpDiagnostic(test);
+        }
+
+        [TestMethod]
+        public void Diagnostic_On_InterpolatedString_Field_Flow()
+        {
+            var test = @"
+    namespace TestMethod2
+    {
+        using System;
+        using System.Data;
+        using Dapper;
+        class TypeName
+        {
+            public static string sql0 = $""select {id}"";
+            public static void Main()
+            {
+                IDbConnection db = null;
+                int id = -1;
+                var sql1 = sql0;
+                var sql2 = sql1;
+                db.Query(sql2);
+            }
+        }
+    }";
+            var expected = new DiagnosticResult
+            {
+                Id = "DAPPER0001",
+                Message = "Interpolated string used in query",
+                Severity = DiagnosticSeverity.Warning,
+                Locations =
+                    new[]
+                    {
+                        new DiagnosticResultLocation("Test0.cs", 9, 41)
                     }
             };
 
